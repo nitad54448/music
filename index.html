@@ -355,7 +355,7 @@
             try {
                 let tracks = [];
                 if (source === 'internet-archive') {
-                    tracks = await searchInternetArchive(query);
+                    tracks = await searchInternetArchive(`creator:(${query})`);
                 } else if (source === 'musopen') {
                     tracks = await searchInternetArchive(`creator:(${query}) AND collection:(musopen)`);
                 }
@@ -370,7 +370,7 @@
         });
 
         async function searchInternetArchive(query) {
-            const searchUrl = `https://archive.org/advancedsearch.php?q=creator:(${encodeURIComponent(query)}) AND mediatype:(audio)&fl[]=identifier,title,creator&rows=50&output=json`;
+            const searchUrl = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(query)} AND mediatype:(audio)&fl[]=identifier,title,creator&rows=50&output=json`;
             const response = await fetch(searchUrl);
             if (!response.ok) {
                 throw new Error('Failed to fetch from Internet Archive');
@@ -441,6 +441,7 @@
             }
         }
 
+        // UPDATED playTrack function with CORS fallback
         async function playTrack(li) {
             setupAudioContext();
             
@@ -472,22 +473,32 @@
 
             nowPlayingTitle.textContent = trackTitle;
             
-            // CORS proxy removed. Direct request to the audio file.
-            // This requires the page to be hosted on a server (like GitHub pages)
-            // to avoid local 'null' origin issues.
-            audioPlayer.src = audioUrl;
-            
-            audioPlayer.play().catch(e => {
-                console.error("Error playing audio:", e);
-                showError("Playback failed. The audio file might be corrupt, unavailable, or blocked by CORS.");
-                li.classList.remove('playing');
-            });
+            const attemptPlayback = async (url, isProxied = false) => {
+                audioPlayer.src = url;
+                try {
+                    await audioPlayer.play();
+                    isPlaying = true;
+                    playPauseButton.innerHTML = '&#10074;&#10074;';
+                    visualize();
+                } catch (error) {
+                    if (!isProxied && error.name === 'NotSupportedError') {
+                        console.warn("Direct playback failed, likely CORS. Retrying with proxy.", error);
+                        // Using a reliable proxy for the fallback
+                        const proxyUrl = 'https://api.allorigins.win/raw?url=';
+                        await attemptPlayback(proxyUrl + encodeURIComponent(audioUrl), true);
+                    } else {
+                        console.error("Playback failed:", error);
+                        showError("Playback failed. The file may be unavailable or blocked.");
+                        li.classList.remove('playing');
+                        isPlaying = false;
+                        playPauseButton.innerHTML = '&#9658;';
+                    }
+                }
+            };
 
-            isPlaying = true;
-            playPauseButton.innerHTML = '&#10074;&#10074;'; // Pause symbol
-            
-            visualize();
+            await attemptPlayback(audioUrl);
         }
+
 
         // Visualization Logic (Waveform)
         function visualize() {
