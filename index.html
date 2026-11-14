@@ -234,6 +234,7 @@
 
     let library = { artists: {} };
     let currentTracklist = [];
+    let playbackQueue = [];
     let currentTrackIndex = -1;
 
     // --- Initialization ---
@@ -257,40 +258,40 @@
         let processedCount = 0;
 
         for (const file of files) {
+            let tags = {};
             try {
-                const tags = await parseFileMetadata(file);
-                const artist = tags.artist || 'Unknown Artist';
-                const album = tags.album || 'Unknown Album';
-
-                if (!library.artists[artist]) {
-                    library.artists[artist] = { albums: {} };
-                }
-                if (!library.artists[artist].albums[album]) {
-                    library.artists[artist].albums[album] = { tracks: [], art: null };
-                }
-                
-                const trackData = {
-                    title: tags.title || file.name.replace(/\.[^/.]+$/, ""),
-                    track: tags.track,
-                    artist,
-                    album,
-                    fileURL: URL.createObjectURL(file)
-                };
-                
-                library.artists[artist].albums[album].tracks.push(trackData);
-
-                if (!library.artists[artist].albums[album].art && tags.picture) {
-                    const { data, format } = tags.picture;
-                    let base64String = "";
-                    for (let i = 0; i < data.length; i++) {
-                        base64String += String.fromCharCode(data[i]);
-                    }
-                    const artUrl = `data:${format};base64,${window.btoa(base64String)}`;
-                    library.artists[artist].albums[album].art = artUrl;
-                }
-
+                tags = (await parseFileMetadata(file)) || {};
             } catch (error) {
-                console.warn(`Could not read tags for ${file.name}:`, error);
+                console.warn(`Could not read tags for ${file.name}, using filename fallback:`, error);
+            }
+            const artist = tags.artist || 'Unknown Artist';
+            const album = tags.album || 'Unknown Album';
+
+            if (!library.artists[artist]) {
+                library.artists[artist] = { albums: {} };
+            }
+            if (!library.artists[artist].albums[album]) {
+                library.artists[artist].albums[album] = { tracks: [], art: null };
+            }
+            
+            const trackData = {
+                title: tags.title || file.name.replace(/\.[^/.]+$/, ""),
+                track: tags.track,
+                artist,
+                album,
+                fileURL: URL.createObjectURL(file)
+            };
+            
+            library.artists[artist].albums[album].tracks.push(trackData);
+
+            if (!library.artists[artist].albums[album].art && tags.picture) {
+                const { data, format } = tags.picture;
+                let base64String = "";
+                for (let i = 0; i < data.length; i++) {
+                    base64String += String.fromCharCode(data[i]);
+                }
+                const artUrl = `data:${format};base64,${window.btoa(base64String)}`;
+                library.artists[artist].albums[album].art = artUrl;
             }
             processedCount++;
             scanProgress.textContent = `Scanning... (${processedCount}/${files.length}) - ${file.name}`;
@@ -361,20 +362,25 @@
     function renderTracks(tracks) {
         tracksList.innerHTML = '';
         currentTracklist = tracks;
+        const playingTrack = playbackQueue[currentTrackIndex];
         tracks.forEach((track, index) => {
             const li = document.createElement('li');
             li.textContent = `${track.track ? track.track + '. ' : ''}${track.title}`;
-            li.onclick = () => playTrack(index);
+            if (playingTrack && playingTrack === track) li.classList.add('playing');
+            li.onclick = () => {
+                playbackQueue = [...tracks];
+                playTrack(index);
+            };
             tracksList.appendChild(li);
         });
     }
 
     // --- Player Logic ---
     function playTrack(index) {
-        if (index < 0 || index >= currentTracklist.length) return;
+        if (index < 0 || index >= playbackQueue.length) return;
         currentTrackIndex = index;
 
-        const track = currentTracklist[index];
+        const track = playbackQueue[index];
         audioPlayer.src = track.fileURL;
         audioPlayer.play();
 
@@ -386,15 +392,20 @@
         playPauseButton.innerHTML = '&#10074;&#10074;'; // Pause symbol
         
         document.querySelectorAll('#tracks-list .playing').forEach(el => el.classList.remove('playing'));
-        tracksList.children[index].classList.add('playing');
+        const viewIndex = currentTracklist.indexOf(track);
+        if (viewIndex !== -1 && tracksList.children[viewIndex]) {
+            tracksList.children[viewIndex].classList.add('playing');
+        }
     }
 
     function playNext() {
-        playTrack((currentTrackIndex + 1) % currentTracklist.length);
+        if (!playbackQueue.length) return;
+        playTrack((currentTrackIndex + 1) % playbackQueue.length);
     }
 
     function playPrev() {
-        const newIndex = currentTrackIndex - 1 < 0 ? currentTracklist.length - 1 : currentTrackIndex - 1;
+        if (!playbackQueue.length) return;
+        const newIndex = currentTrackIndex - 1 < 0 ? playbackQueue.length - 1 : currentTrackIndex - 1;
         playTrack(newIndex);
     }
     
